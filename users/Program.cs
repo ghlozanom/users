@@ -7,16 +7,44 @@ const string AuthScheme = "cookie";
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddAuthentication(AuthScheme)
-    .AddCookie(AuthScheme);
+    .AddCookie("patreon")
+    .AddCookie(AuthScheme)
+    .AddOAuth("external-oauth", o => {
+        o.SignInScheme = "patreon";
+
+        o.ClientId = "id";
+        o.ClientSecret = "secret";
+
+        o.AuthorizationEndpoint = "http://oauth.mocklab.io/oauth/authorize";
+        o.TokenEndpoint = "http://oauth.mocklab.io/oauth/token";
+
+        o.CallbackPath = "/oauth-cb";
+        o.Scope.Add("profile");
+        o.SaveTokens = true;
+    });
 
 builder.Services.AddAuthorization(builder =>
 {
     builder.AddPolicy("col passport", pb =>
     {
         pb.RequireAuthenticatedUser()
-            .AddAuthenticationSchemes(AuthScheme)
+            .AddAuthenticationSchemes(AuthScheme, "patreon")
             .RequireClaim("passport", "COL");
     });
+
+    builder.AddPolicy("user", pb =>
+    {
+        pb.RequireAuthenticatedUser()
+            .AddAuthenticationSchemes(AuthScheme)
+            .RequireAuthenticatedUser();
+    });
+
+    builder.AddPolicy("oauthuser", pb =>
+    {
+        pb.RequireAuthenticatedUser()
+            .AddAuthenticationSchemes("patreon")
+            .RequireAuthenticatedUser();
+    });    
 });
 
 // Add services to the container.
@@ -36,34 +64,6 @@ var app = builder.Build();
 
 app.UseAuthentication();
 
-// app.Use((ctx, next) =>
-// {
-//     if (ctx.Request.Path.StartsWithSegments("/login"))
-//     {
-//         return next();
-//     }
-
-//     if (ctx.Request.Path.StartsWithSegments("/favicon"))
-//     {
-//         return next();
-//     }    
-
-//     if (!ctx.User.Identities.Any(identity => identity.AuthenticationType == AuthScheme))
-//     {
-//         ctx.Response.StatusCode = 401;
-//         return Task.CompletedTask;
-//     }
-
-//     if (!ctx.User.HasClaim("passport", "COL"))
-//     {
-//         ctx.Response.StatusCode = 403;
-//         return Task.CompletedTask;
-//     }    
-
-//     return next();
-// });
-
-// Instead:
 app.UseAuthorization();
 
 // Configure the HTTP request pipeline.
@@ -79,37 +79,27 @@ app.MapControllers();
 
 app.MapGet("/sweden", (HttpContext ctx) =>
 {
-    // if (!ctx.User.Identities.Any(identity => identity.AuthenticationType == AuthScheme))
-    // {
-    //     ctx.Response.StatusCode = 401;
-    //     return "";
-    // }
-
-    // if (!ctx.User.HasClaim("passport", "eur"))
-    // {
-    //     ctx.Response.StatusCode = 403;
-    //     return "";
-    // }
 
     return "allowed";
 });
 
 app.MapGet("/col", (HttpContext ctx) =>
 {
-    // if (!ctx.User.Identities.Any(identity => identity.AuthenticationType == AuthScheme))
-    // {
-    //     ctx.Response.StatusCode = 401;
-    //     return "";
-    // }
-
-    // if (!ctx.User.HasClaim("passport", "COL"))
-    // {
-    //     ctx.Response.StatusCode = 403;
-    //     return "";
-    // }
-
     return "allowed";
+
 }).RequireAuthorization("col passport");
+
+app.MapGet("/onlyoauth", (HttpContext ctx) =>
+{
+    return "allowed";
+
+}).RequireAuthorization("oauthuser");
+
+app.MapGet("/oauth-cb", (HttpContext ctx) =>
+{
+    return "allowed";
+    
+});
 
 app.MapGet("/login", async (HttpContext ctx) =>
 {
@@ -119,7 +109,14 @@ app.MapGet("/login", async (HttpContext ctx) =>
     var identity = new ClaimsIdentity(claims, AuthScheme);
     var user = new ClaimsPrincipal(identity);
     await ctx.SignInAsync(AuthScheme, user);
-}
-);
+});
+
+app.MapGet("/login-oauth", async (HttpContext ctx) =>
+{
+    await ctx.ChallengeAsync("external-oauth", new AuthenticationProperties()
+    {
+        RedirectUri = "/onlyoauth"
+    });
+}).RequireAuthorization("user");
 
 app.Run();
